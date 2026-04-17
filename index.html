@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>서바이벌 소녀단 🌸</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<!-- Character Select -->
+<div id="charSelectOverlay">
+  <div id="charSelectTitle">서바이벌 소녀단</div>
+  <div id="charSelectSub">20분 생존에 도전하라 • WASD 이동 • 자동 공격</div>
+  <div id="charCards"></div>
+  <button id="startBtn" disabled>게임 시작 ▶</button>
+</div>
+
+<!-- Level Up -->
+<div id="levelUpOverlay">
+  <div id="levelUpTitle">⬆️ 레벨 업! 강화를 선택하세요</div>
+  <div id="levelUpCards"></div>
+</div>
+
+<!-- End Screen -->
+<div id="endOverlay">
+  <div id="endTitle"></div>
+  <div id="endStats"></div>
+  <button id="retryBtn">다시 하기 ↩</button>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
