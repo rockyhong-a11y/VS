@@ -10,8 +10,82 @@ const ctx = canvas.getContext('2d');
 
 // ─── INPUT ──────────────────────────────────────────────────
 const keys = {};
+const joystick = { active: false, dx: 0, dy: 0 };
 document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
+
+// Touch detection
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+if (isTouchDevice) document.body.classList.add('is-touch');
+
+// Virtual joystick
+(function setupJoystick() {
+  const pad = document.getElementById('joystick');
+  const knob = document.getElementById('joystickKnob');
+  if (!pad) return;
+  let touchId = null;
+  const MAX = 45;
+
+  function start(e) {
+    e.preventDefault();
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    touchId = e.changedTouches ? t.identifier : 'mouse';
+    joystick.active = true;
+    move(e);
+  }
+  function move(e) {
+    if (!joystick.active) return;
+    e.preventDefault();
+    let t;
+    if (e.changedTouches) {
+      for (const ct of e.changedTouches) if (ct.identifier === touchId) { t = ct; break; }
+      if (!t) return;
+    } else t = e;
+    const rect = pad.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let dx = t.clientX - cx, dy = t.clientY - cy;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len > MAX) { dx = dx/len*MAX; dy = dy/len*MAX; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const deadzone = 8;
+    if (len < deadzone) { joystick.dx = 0; joystick.dy = 0; }
+    else { joystick.dx = dx / MAX; joystick.dy = dy / MAX; }
+  }
+  function end(e) {
+    if (e.changedTouches) {
+      let match = false;
+      for (const ct of e.changedTouches) if (ct.identifier === touchId) match = true;
+      if (!match) return;
+    }
+    joystick.active = false;
+    joystick.dx = 0; joystick.dy = 0;
+    knob.style.transform = 'translate(0, 0)';
+    touchId = null;
+  }
+  pad.addEventListener('touchstart', start, { passive: false });
+  pad.addEventListener('touchmove', move, { passive: false });
+  pad.addEventListener('touchend', end);
+  pad.addEventListener('touchcancel', end);
+  pad.addEventListener('mousedown', start);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+})();
+
+// Canvas responsive scaling (CSS size only, keep internal resolution)
+function fitCanvas() {
+  const wrap = document.getElementById('gameWrap');
+  const vw = wrap.clientWidth;
+  const vh = wrap.clientHeight;
+  const ratio = CANVAS_W / CANVAS_H;
+  let w = vw, h = vw / ratio;
+  if (h > vh) { h = vh; w = vh * ratio; }
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+}
+window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 100));
+fitCanvas();
 
 // ─── GAME STATE ─────────────────────────────────────────────
 let G = null; // current game state
@@ -59,7 +133,22 @@ const particles = [];
 const dmgNumbers = [];
 let screenShake = { x: 0, y: 0, power: 0, timer: 0 };
 
+// Performance caps
+const MAX_PARTICLES = 140;
+const MAX_DMG_NUMBERS = 28;
+const MAX_ENEMIES = 180;
+const MAX_PROJECTILES = 120;
+const MAX_XP_GEMS = 60;
+
+// ── 게임 전역 설정 ─────────────────────────────────────────
+const ZOOM = 0.67;          // 1.0 = 1:1, 0.67 = ~50% 줌아웃 (더 넓게)
+const GAME_SPEED_MULT = 1.2; // 게임 속도 배율
+
 function spawnParticles(wx, wy, color, count, speed = 80) {
+  // Respect cap — drop oldest
+  const budget = MAX_PARTICLES - particles.length;
+  if (budget <= 0) return;
+  count = Math.min(count, budget);
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
     const sp = speed * (0.5 + Math.random() * 0.8);
@@ -68,6 +157,11 @@ function spawnParticles(wx, wy, color, count, speed = 80) {
             color, 2 + Math.random()*3, 0.3 + Math.random()*0.5);
     particles.push(p);
   }
+}
+
+function pushDmgNumber(dn) {
+  if (dmgNumbers.length >= MAX_DMG_NUMBERS) dmgNumbers.shift();
+  dmgNumbers.push(dn);
 }
 
 function addScreenShake(power) {
@@ -128,17 +222,22 @@ class Player {
   update(dt, enemies) {
     this.frame += dt;
 
-    // Movement
+    // Movement (keyboard + joystick)
     let dx = 0, dy = 0;
     if (keys['KeyW'] || keys['ArrowUp'])    dy -= 1;
     if (keys['KeyS'] || keys['ArrowDown'])  dy += 1;
     if (keys['KeyA'] || keys['ArrowLeft'])  dx -= 1;
     if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
-    if (dx || dy) {
-      const n = normalize(dx, dy);
-      this.x = clamp(this.x + n.x * this.speed * dt, 0, WORLD_W);
-      this.y = clamp(this.y + n.y * this.speed * dt, 0, WORLD_H);
-      if (n.x !== 0) this.facing = n.x > 0 ? 1 : -1;
+    if (joystick.active && (joystick.dx || joystick.dy)) {
+      dx = joystick.dx; dy = joystick.dy;
+    }
+    const mag = Math.sqrt(dx*dx + dy*dy);
+    if (mag > 0) {
+      const speedScale = Math.min(mag, 1);
+      const nx = dx / mag, ny = dy / mag;
+      this.x = clamp(this.x + nx * this.speed * speedScale * dt, 0, WORLD_W);
+      this.y = clamp(this.y + ny * this.speed * speedScale * dt, 0, WORLD_H);
+      if (nx !== 0) this.facing = nx > 0 ? 1 : -1;
     }
     this.moveX = dx; this.moveY = dy;
 
@@ -151,20 +250,28 @@ class Player {
     // Update weapon cooldowns & orb angles
     for (const w of this.weapons) {
       if (w.cooldownTimer > 0) w.cooldownTimer -= dt;
-      if (w.def.id === 'magicOrb') {
+      if (w.def.id === 'magicOrb' || w.def.id === 'kingBible' || w.def.id === 'ebonyWings') {
         const lvl = w.def.levels[w.level - 1];
-        w.orbAngle += lvl.speed * dt;
+        w.orbAngle = (w.orbAngle || 0) + lvl.speed * dt;
       }
     }
 
-    // XP pickup
+    // XP pickup. If too many gems accumulated, attract nearest ones toward player.
     if (G) {
+      const rangeSq = this.xpRange * this.xpRange;
+      const overflow = G.xpGems.length > MAX_XP_GEMS;
       for (let i = G.xpGems.length - 1; i >= 0; i--) {
         const gem = G.xpGems[i];
-        if (distSq(this.x, this.y, gem.x, gem.y) < this.xpRange * this.xpRange) {
+        const dSq = distSq(this.x, this.y, gem.x, gem.y);
+        if (dSq < rangeSq) {
           G.gainXp(gem.value);
-          spawnParticles(gem.x, gem.y, '#88ffaa', 3, 40);
+          spawnParticles(gem.x, gem.y, '#88ffaa', 2, 40);
           G.xpGems.splice(i, 1);
+        } else if (overflow) {
+          // Pull toward player so they can be collected
+          const d = Math.sqrt(dSq) || 1;
+          gem.x += (this.x - gem.x) / d * 220 * dt;
+          gem.y += (this.y - gem.y) / d * 220 * dt;
         }
       }
     }
@@ -251,13 +358,77 @@ class Projectile {
     this.hitIds = new Set();
     this.lifetime = 2.5;
   }
-  update(dt) {
+  update(dt, game) {
+    // BOOMERANG (cross, bone): go out, then return to player
+    if (this.boomerang) {
+      this.spin = (this.spin || 0) + dt * 18;
+      const p = game.player;
+      if (!this.returning) {
+        const dx = this.x - this.originX, dy = this.y - this.originY;
+        if (dx*dx + dy*dy > this.maxRange * this.maxRange) this.returning = true;
+      }
+      if (this.returning) {
+        const dx = p.x - this.x, dy = p.y - this.y;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d < 20) { this.alive = false; return; }
+        const sp = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+        this.vx = dx / d * sp; this.vy = dy / d * sp;
+        // Re-hit enemies on return
+        this.hitIds.clear();
+      }
+    }
+
+    // BOUNCY (cherryBomb): bounce off world edges, explode when done
+    if (this.bouncy) {
+      this.spin = (this.spin || 0) + dt * 10;
+      // Ground drag
+      this.vx *= (1 - dt * 0.6);
+      this.vy *= (1 - dt * 0.6);
+    }
+
+    // RUNETRACER: bounce off world edges, counts down
+    if (this.bounces !== undefined && this.bounces > 0) {
+      if (this.x < 0 || this.x > WORLD_W) { this.vx = -this.vx; this.bounces--; }
+      if (this.y < 0 || this.y > WORLD_H) { this.vy = -this.vy; this.bounces--; }
+      this.x = clamp(this.x, 0, WORLD_W);
+      this.y = clamp(this.y, 0, WORLD_H);
+    } else if (this.bouncy) {
+      if (this.x < 0 || this.x > WORLD_W) {
+        this.vx = -this.vx * 0.8;
+        if (this.bouncesLeft-- <= 0) this._explode(game);
+      }
+      if (this.y < 0 || this.y > WORLD_H) {
+        this.vy = -this.vy * 0.8;
+        if (this.bouncesLeft-- <= 0) this._explode(game);
+      }
+      this.x = clamp(this.x, 0, WORLD_W);
+      this.y = clamp(this.y, 0, WORLD_H);
+    }
+
     this.x += this.vx * dt;
     this.y += this.vy * dt;
     this.lifetime -= dt;
-    if (this.lifetime <= 0) this.alive = false;
-    if (this.x < -200 || this.x > WORLD_W + 200 || this.y < -200 || this.y > WORLD_H + 200)
+    if (this.lifetime <= 0) {
+      if (this.bouncy && !this._exploded) this._explode(game);
       this.alive = false;
+    }
+    if (!this.boomerang &&
+        (this.x < -200 || this.x > WORLD_W + 200 || this.y < -200 || this.y > WORLD_H + 200))
+      this.alive = false;
+  }
+  _explode(game) {
+    if (this._exploded) return;
+    this._exploded = true;
+    const eff = new AreaEffect(this.x, this.y, this.explosionRadius, this.explosionDamage, '#ff6633', 'explosion', 0.5, 999);
+    game.areaEffects.push(eff);
+    // instant damage
+    for (const e of game.enemies) {
+      if (dist(this.x, this.y, e.x, e.y) <= this.explosionRadius) {
+        game._dealDamage(e, this.explosionDamage, e.x, e.y);
+      }
+    }
+    spawnParticles(this.x, this.y, '#ff6633', 14, 180);
+    screenShake.power = 10; screenShake.timer = 0.25;
   }
 }
 
@@ -287,8 +458,23 @@ class Game {
     this.pendingUpgrades = [];
     this.difficulty = 0;
 
-    // Track which weapons can still be unlocked
-    this.availableWeapons = Object.keys(WEAPON_DEFS).filter(id => id !== this.player.def.startWeapon);
+    // Track which weapons can still be unlocked.
+    // Aliases share mechanics — pick one representative per group.
+    const aliasGroups = {
+      arrow: 'magicWand', magicWand: 'magicWand',
+      bullet: 'gun',      gun: 'gun',
+      thunder: 'lightningRing', lightningRing: 'lightningRing',
+      magicOrb: 'kingBible',    kingBible: 'kingBible',
+    };
+    const startCanon = aliasGroups[this.player.def.startWeapon] || this.player.def.startWeapon;
+    const seen = new Set([startCanon]);
+    this.availableWeapons = [];
+    for (const id of Object.keys(WEAPON_DEFS)) {
+      const canon = aliasGroups[id] || id;
+      if (seen.has(canon)) continue;
+      seen.add(canon);
+      this.availableWeapons.push(id);
+    }
     this.availableItems = Object.keys(ITEM_DEFS);
 
     screen = 'playing';
@@ -428,18 +614,21 @@ class Game {
     const cd = (lvl.cooldown || 1) * p.cdMult;
 
     switch (w.def.id) {
-      case 'sword':
-        this._fireSword(lvl, dmg, aoe); break;
+      case 'sword':          this._fireSword(lvl, dmg, aoe); break;
       case 'arrow':
-        this._fireArrow(lvl, dmg, p); break;
+      case 'magicWand':      this._fireArrow(lvl, dmg, p); break;
       case 'bullet':
-        this._fireBullet(lvl, dmg, p); break;
+      case 'gun':            this._fireBullet(lvl, dmg, p); break;
       case 'thunder':
-        this._fireThunder(lvl, dmg); break;
-      case 'holyWater':
-        this._fireHolyWater(lvl, dmg, aoe); break;
-      case 'explosion':
-        this._fireExplosion(lvl, dmg, aoe); break;
+      case 'lightningRing':  this._fireThunder(lvl, dmg); break;
+      case 'holyWater':      this._fireHolyWater(lvl, dmg, aoe); break;
+      case 'explosion':      this._fireExplosion(lvl, dmg, aoe); break;
+      case 'whip':           this._fireWhip(lvl, dmg, aoe); break;
+      case 'runetracer':     this._fireRunetracer(lvl, dmg, p); break;
+      case 'fireWand':       this._fireFireWand(lvl, dmg, aoe, p); break;
+      case 'cross':          this._fireCross(lvl, dmg, p); break;
+      case 'bone':           this._fireBone(lvl, dmg, p); break;
+      case 'cherryBomb':     this._fireCherryBomb(lvl, dmg, aoe, p); break;
     }
     w.cooldownTimer = cd;
   }
@@ -475,22 +664,25 @@ class Game {
     spawnParticles(p.x, p.y, '#88ccff', 12, 80);
   }
 
+  _pushProjectile(proj) {
+    if (this.projectiles.length >= MAX_PROJECTILES) this.projectiles.shift();
+    this.projectiles.push(proj);
+  }
+
   _fireArrow(lvl, dmg, player) {
     const nearest = this._nearestEnemy(player.x, player.y);
     if (!nearest) return;
     const piercing = lvl.piercing || player.def.passive.piercing;
-    const spread = (lvl.count - 1) * 0.15;
     const baseAngle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
     for (let i = 0; i < lvl.count; i++) {
       const angle = baseAngle + (i - (lvl.count-1)/2) * 0.2;
-      const proj = new Projectile(
+      this._pushProjectile(new Projectile(
         player.x, player.y,
         Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
         dmg, '#88ffaa', 'arrow', 5, piercing
-      );
-      this.projectiles.push(proj);
+      ));
     }
-    spawnParticles(player.x, player.y, '#88ffaa', 4, 50);
+    spawnParticles(player.x, player.y, '#88ffaa', 3, 50);
   }
 
   _fireBullet(lvl, dmg, player) {
@@ -499,12 +691,11 @@ class Game {
     const baseAngle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
     for (let i = 0; i < lvl.count; i++) {
       const angle = baseAngle + (i - (lvl.count-1)/2) * lvl.spread;
-      const proj = new Projectile(
+      this._pushProjectile(new Projectile(
         player.x, player.y,
         Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
         dmg, '#ffaa44', 'bullet', 4, false
-      );
-      this.projectiles.push(proj);
+      ));
     }
   }
 
@@ -561,11 +752,151 @@ class Game {
     }
   }
 
+  // === NEW WEAPONS ===
+  _fireWhip(lvl, dmg, aoeMult) {
+    const p = this.player;
+    const len = lvl.length * aoeMult;
+    const wid = lvl.width;
+    // Alternate sides per shot
+    p._whipToggle = !p._whipToggle;
+    const dirs = lvl.count >= 2 ? [-1, 1] : [p._whipToggle ? -1 : 1];
+    if (lvl.count >= 4) dirs.push(-1, 1);
+    for (const sign of dirs) {
+      const cx = p.x + sign * len / 2, cy = p.y;
+      // Instant damage in rectangle
+      for (const e of this.enemies) {
+        if (Math.abs(e.x - cx) < len/2 && Math.abs(e.y - cy) < wid/2) {
+          this._dealDamage(e, dmg, e.x, e.y);
+        }
+      }
+      // Visual: directional slash
+      const eff = new AreaEffect(cx, cy, len/2, 0, '#ff99bb', 'whip', 0.25, 999);
+      eff.width = wid; eff.sign = sign;
+      this.areaEffects.push(eff);
+      spawnParticles(cx, cy, '#ff99bb', 6, 80);
+    }
+  }
+
+  _fireRunetracer(lvl, dmg, player) {
+    for (let i = 0; i < lvl.count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const proj = new Projectile(
+        player.x, player.y,
+        Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
+        dmg, '#66ddff', 'runetracer', 7, true
+      );
+      proj.bounces = lvl.bounces;
+      proj.lifetime = lvl.lifetime;
+      this._pushProjectile(proj);
+    }
+    spawnParticles(player.x, player.y, '#66ddff', 5, 60);
+  }
+
+  _fireFireWand(lvl, dmg, aoeMult, player) {
+    const nearest = this._nearestEnemy(player.x, player.y);
+    if (!nearest) return;
+    const baseAngle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
+    for (let i = 0; i < lvl.count; i++) {
+      const angle = baseAngle + (i - (lvl.count-1)/2) * 0.15;
+      const proj = new Projectile(
+        player.x, player.y,
+        Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
+        dmg, '#ff6622', 'fireball', 7, false
+      );
+      proj.onHit = 'explode';
+      proj.explosionRadius = lvl.explosionRadius * aoeMult;
+      this._pushProjectile(proj);
+    }
+  }
+
+  _fireCross(lvl, dmg, player) {
+    const nearest = this._nearestEnemy(player.x, player.y);
+    const baseAngle = nearest
+      ? Math.atan2(nearest.y - player.y, nearest.x - player.x)
+      : Math.random() * Math.PI * 2;
+    for (let i = 0; i < lvl.count; i++) {
+      const angle = baseAngle + (i - (lvl.count-1)/2) * 0.3;
+      const proj = new Projectile(
+        player.x, player.y,
+        Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
+        dmg, '#ffdd88', 'cross', 9, true
+      );
+      proj.boomerang = true;
+      proj.originX = player.x; proj.originY = player.y;
+      proj.maxRange = lvl.range;
+      proj.returning = false;
+      proj.lifetime = 4;
+      proj.spin = 0;
+      this._pushProjectile(proj);
+    }
+  }
+
+  _fireBone(lvl, dmg, player) {
+    const nearest = this._nearestEnemy(player.x, player.y);
+    const baseAngle = nearest
+      ? Math.atan2(nearest.y - player.y, nearest.x - player.x)
+      : Math.random() * Math.PI * 2;
+    for (let i = 0; i < lvl.count; i++) {
+      const angle = baseAngle + (i - (lvl.count-1)/2) * 0.25;
+      const proj = new Projectile(
+        player.x, player.y,
+        Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
+        dmg, '#f0e8d4', 'bone', 7, true
+      );
+      proj.boomerang = true;
+      proj.originX = player.x; proj.originY = player.y;
+      proj.maxRange = lvl.range;
+      proj.returning = false;
+      proj.lifetime = 4;
+      proj.spin = 0;
+      this._pushProjectile(proj);
+    }
+  }
+
+  _fireCherryBomb(lvl, dmg, aoeMult, player) {
+    const radius = lvl.radius * aoeMult;
+    for (let i = 0; i < lvl.count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const proj = new Projectile(
+        player.x, player.y,
+        Math.cos(angle) * lvl.speed, Math.sin(angle) * lvl.speed,
+        dmg, '#ff4466', 'cherryBomb', 8, false
+      );
+      proj.bouncy = true;
+      proj.bouncesLeft = lvl.bounces;
+      proj.explosionRadius = radius;
+      proj.explosionDamage = dmg;
+      proj.lifetime = 2.5;
+      proj.spin = 0;
+      this._pushProjectile(proj);
+    }
+  }
+
+  // GARLIC aura — called every frame, not via _fireWeapon
+  _updateGarlic(dt) {
+    const p = this.player;
+    const garlic = p.getWeapon('garlic');
+    if (!garlic) return;
+    const lvl = garlic.def.levels[garlic.level - 1];
+    const radius = lvl.radius * p.aoeMult;
+    const tickRate = lvl.tickRate * p.cdMult;
+    const dmg = lvl.damage * p.atkMult;
+    p._garlicTick = (p._garlicTick || 0) - dt;
+    if (p._garlicTick <= 0) {
+      p._garlicTick = tickRate;
+      for (const e of this.enemies) {
+        if (dist(p.x, p.y, e.x, e.y) <= radius) {
+          this._dealDamage(e, dmg, e.x, e.y);
+        }
+      }
+    }
+  }
+
   _dealDamage(enemy, dmg, sx, sy) {
     const crit = Math.random() < 0.1;
     const finalDmg = Math.round(dmg * (crit ? 2 : 1));
     const died = enemy.takeDamage(finalDmg);
-    dmgNumbers.push(new DmgNumber(enemy.x, enemy.y - 20, finalDmg, crit, '#fff'));
+    pushDmgNumber(new DmgNumber(enemy.x, enemy.y - 20, finalDmg, crit, '#fff'));
     if (died) {
       this._onEnemyDie(enemy);
     }
@@ -593,7 +924,9 @@ class Game {
   _updateWeapons(dt) {
     const p = this.player;
     for (const w of p.weapons) {
-      if (w.def.id === 'magicOrb') continue; // orbs handled in draw
+      const id = w.def.id;
+      // Orbiters + garlic are continuously handled, not cooldown-fired
+      if (id === 'magicOrb' || id === 'kingBible' || id === 'ebonyWings' || id === 'garlic') continue;
       if (w.cooldownTimer <= 0) {
         this._fireWeapon(w);
       }
@@ -601,28 +934,31 @@ class Game {
   }
 
   _updateMagicOrbs(dt) {
-    // Magic orb collision handled here
     const p = this.player;
-    const orbWeapon = p.getWeapon('magicOrb');
-    if (!orbWeapon) return;
-    const lvl = orbWeapon.def.levels[orbWeapon.level - 1];
-    const count = lvl.count;
-    const radius = lvl.range * p.aoeMult;
-    const dmg = lvl.damage * p.atkMult;
+    const orbiters = p.weapons.filter(w =>
+      w.def.id === 'magicOrb' || w.def.id === 'kingBible' || w.def.id === 'ebonyWings');
+    if (!orbiters.length) return;
+    // decay hit cooldowns per enemy once
+    for (const e of this.enemies) if (e._orbHitTimer > 0) e._orbHitTimer -= dt;
 
-    for (let i = 0; i < count; i++) {
-      const angle = orbWeapon.orbAngle + (i / count) * Math.PI * 2;
-      const ox = p.x + Math.cos(angle) * radius;
-      const oy = p.y + Math.sin(angle) * radius;
-      // Collision
-      for (const e of this.enemies) {
-        if (dist(ox, oy, e.x, e.y) < e.def.size + 7) {
-          if (!e._orbHitTimer || e._orbHitTimer <= 0) {
-            this._dealDamage(e, dmg, ox, oy);
-            e._orbHitTimer = 0.3;
+    for (const orb of orbiters) {
+      const lvl = orb.def.levels[orb.level - 1];
+      const count = lvl.count;
+      const radius = lvl.range * p.aoeMult;
+      const dmg = lvl.damage * p.atkMult;
+      // angle already updated in Player.update
+      for (let i = 0; i < count; i++) {
+        const angle = orb.orbAngle + (i / count) * Math.PI * 2;
+        const ox = p.x + Math.cos(angle) * radius;
+        const oy = p.y + Math.sin(angle) * radius;
+        for (const e of this.enemies) {
+          if (dist(ox, oy, e.x, e.y) < e.def.size + 8) {
+            if (!e._orbHitTimer || e._orbHitTimer <= 0) {
+              this._dealDamage(e, dmg, ox, oy);
+              e._orbHitTimer = 0.35;
+            }
           }
         }
-        if (e._orbHitTimer > 0) e._orbHitTimer -= dt;
       }
     }
   }
@@ -643,24 +979,30 @@ class Game {
     // Player
     this.player.update(dt, this.enemies);
     if (!this.player.alive) {
-      screen = 'dead';
-      showEndScreen(false, this);
+      screen = 'charSelect';
+      G = null;
+      selectedCharId = null;
+      document.getElementById('charSelectOverlay').style.display = 'flex';
+      document.getElementById('endOverlay').classList.remove('active');
       return;
     }
 
     // Enemy damage to player
     for (const e of this.enemies) {
       if (dist(this.player.x, this.player.y, e.x, e.y) < e.def.size + 14) {
-        this.player.takeDamage(e.damage * dt * 2.5);
+        this.player.takeDamage(e.damage * dt * 25);
       }
     }
 
-    // Spawn enemies
+    // Spawn enemies (capped)
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
-      const batch = Math.min(2 + Math.floor(this.gameTime / 30), 12);
-      for (let i = 0; i < batch; i++) this.spawnEnemy();
-      const interval = Math.max(0.4, 1.8 - this.gameTime / 120);
+      const room = MAX_ENEMIES - this.enemies.length;
+      if (room > 0) {
+        const batch = Math.min(2 + Math.floor(this.gameTime / 45), 7, room);
+        for (let i = 0; i < batch; i++) this.spawnEnemy();
+      }
+      const interval = Math.max(0.6, 1.8 - this.gameTime / 180);
       this.spawnTimer = interval;
     }
 
@@ -680,21 +1022,23 @@ class Game {
     // Weapons
     this._updateWeapons(dt);
     this._updateMagicOrbs(dt);
+    this._updateGarlic(dt);
 
     // Projectile collision
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
-      proj.update(dt);
+      proj.update(dt, this);
       if (!proj.alive) { this.projectiles.splice(i, 1); continue; }
 
-      let hit = false;
       for (const e of this.enemies) {
         if (proj.hitIds.has(e.id)) continue;
         if (dist(proj.x, proj.y, e.x, e.y) < e.def.size + proj.radius) {
           proj.hitIds.add(e.id);
           this._dealDamage(e, proj.damage, proj.x, proj.y);
-          spawnParticles(proj.x, proj.y, proj.color, 4, 50);
-          if (!proj.piercing) { proj.alive = false; hit = true; break; }
+          spawnParticles(proj.x, proj.y, proj.color, 3, 50);
+          // On-hit explosion (fireWand)
+          if (proj.onHit === 'explode' && !proj._exploded) proj._explode(this);
+          if (!proj.piercing) { proj.alive = false; break; }
         }
       }
       if (!proj.alive) this.projectiles.splice(i, 1);
@@ -738,37 +1082,65 @@ class Game {
 
   draw() {
     const p = this.player;
-    const camX = p.x - CANVAS_W / 2 + screenShake.x;
-    const camY = p.y - CANVAS_H / 2 + screenShake.y;
+    // ZOOM: 카메라가 ZOOM 배율로 더 넓은 영역을 보여줌
+    const visW = CANVAS_W / ZOOM;
+    const visH = CANVAS_H / ZOOM;
+    const camX = p.x - visW / 2 + screenShake.x / ZOOM;
+    const camY = p.y - visH / 2 + screenShake.y / ZOOM;
 
     renderer.clear();
-    renderer.drawWorld(camX, camY);
+    renderer.drawWorld(camX, camY, ZOOM);
 
     ctx.save();
+    ctx.scale(ZOOM, ZOOM);
     ctx.translate(-camX, -camY);
 
-    // XP gems
-    for (const gem of this.xpGems) renderer.drawXpGem(ctx, gem);
+    // Viewport for culling (세계 좌표 기준)
+    const vL = camX - 60, vR = camX + visW + 60;
+    const vT = camY - 60, vB = camY + visH + 60;
+    const inView = (x, y) => x > vL && x < vR && y > vT && y < vB;
+
+    // XP gems (cull offscreen)
+    for (const gem of this.xpGems) if (inView(gem.x, gem.y)) renderer.drawXpGem(ctx, gem);
 
     // Area effects
-    for (const eff of this.areaEffects) renderer.drawAreaEffect(ctx, eff);
+    for (const eff of this.areaEffects) if (inView(eff.x, eff.y)) renderer.drawAreaEffect(ctx, eff);
 
-    // Enemies
-    for (const e of this.enemies) renderer.drawEnemy(ctx, e);
+    // Enemies (cull offscreen)
+    for (const e of this.enemies) if (inView(e.x, e.y)) renderer.drawEnemy(ctx, e);
 
-    // Magic orbs
-    const orbW = p.getWeapon('magicOrb');
-    if (orbW) {
+    // Orbital weapons (magicOrb / kingBible / ebonyWings)
+    for (const id of ['magicOrb', 'kingBible', 'ebonyWings']) {
+      const orbW = p.getWeapon(id);
+      if (!orbW) continue;
       const lvl = orbW.def.levels[orbW.level - 1];
       const count = lvl.count;
       const radius = lvl.range * p.aoeMult;
+      const visualType = id === 'ebonyWings' ? 'bird_orb' : (id === 'kingBible' ? 'book_orb' : 'magic_orb');
+      const col = id === 'ebonyWings' ? '#3a2a4a' : (id === 'kingBible' ? '#ffdd88' : '#dd88ff');
       for (let i = 0; i < count; i++) {
         const angle = orbW.orbAngle + (i / count) * Math.PI * 2;
         const ox = p.x + Math.cos(angle) * radius;
         const oy = p.y + Math.sin(angle) * radius;
-        const fakeProj = { x: ox, y: oy, type: 'magic_orb', color: '#dd88ff', radius: 8, angle };
+        const fakeProj = { x: ox, y: oy, type: visualType, color: col, radius: 8, angle };
         renderer.drawProjectile(ctx, fakeProj);
       }
+    }
+
+    // Garlic aura ring (visual only)
+    const garlicW = p.getWeapon('garlic');
+    if (garlicW) {
+      const lvl = garlicW.def.levels[garlicW.level - 1];
+      const r = lvl.radius * p.aoeMult;
+      ctx.save();
+      ctx.globalAlpha = 0.25 + 0.1 * Math.sin(performance.now() * 0.005);
+      ctx.fillStyle = '#d8e0a0';
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = '#b0c068';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
     }
 
     // Projectiles
@@ -894,7 +1266,7 @@ function buildCharSelect() {
     card.dataset.charId = id;
 
     const portraitCanvas = document.createElement('canvas');
-    portraitCanvas.width = 90; portraitCanvas.height = 110;
+    portraitCanvas.width = 110; portraitCanvas.height = 140;
 
     const stats = def.stats;
     card.innerHTML = `
@@ -916,7 +1288,7 @@ function buildCharSelect() {
     // Re-insert portrait canvas (after innerHTML overwrite)
     card.insertBefore(portraitCanvas, card.firstChild);
 
-    setTimeout(() => drawCharPortrait(portraitCanvas, def, 1.8), 10);
+    setTimeout(() => drawCharPortrait(portraitCanvas, def, 1.15), 10);
 
     card.addEventListener('click', () => {
       document.querySelectorAll('.char-card').forEach(c => c.classList.remove('selected'));
@@ -955,7 +1327,7 @@ document.getElementById('retryBtn').addEventListener('click', () => {
 let lastTime = 0;
 
 function gameLoop(ts) {
-  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  const dt = Math.min((ts - lastTime) / 1000, 0.05) * GAME_SPEED_MULT;
   lastTime = ts;
 
   if (G && screen === 'playing') {
@@ -972,5 +1344,7 @@ function gameLoop(ts) {
 }
 
 // ─── INIT ───────────────────────────────────────────────────
-buildCharSelect();
-requestAnimationFrame((ts) => { lastTime = ts; gameLoop(ts); });
+SPRITES.load(() => {
+  buildCharSelect();
+  requestAnimationFrame((ts) => { lastTime = ts; gameLoop(ts); });
+});
