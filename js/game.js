@@ -80,14 +80,19 @@ function fitCanvas() {
   const ratio = CANVAS_W / CANVAS_H; // 1.5 (landscape)
 
   if (isPortrait) {
-    // 세로 모드: 캔버스가 화면 전체 너비를 채우고 상단에 고정
-    const w = vw;
-    const h = Math.round(vw / ratio);
-    canvas.style.width  = w + 'px';
-    canvas.style.height = h + 'px';
-    canvas.style.display = 'block';
+    // 세로 모드: 화면 전체 높이를 채움. 가로는 비율 유지(화면보다 넓어지면 양옆 클리핑)
+    const h = vh;
+    const w = Math.round(h * ratio);
+    canvas.style.width    = w + 'px';
+    canvas.style.height   = h + 'px';
+    canvas.style.position = 'absolute';
+    canvas.style.top      = '0';
+    canvas.style.left     = Math.round((vw - w) / 2) + 'px';
   } else {
     // 가로 모드: 비율 유지하며 뷰포트에 맞춤
+    canvas.style.position = '';
+    canvas.style.top      = '';
+    canvas.style.left     = '';
     let w = vw, h = Math.round(vw / ratio);
     if (h > vh) { h = vh; w = Math.round(vh * ratio); }
     canvas.style.width  = w + 'px';
