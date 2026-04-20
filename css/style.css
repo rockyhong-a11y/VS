@@ -1,14 +1,17 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-html, body { width: 100%; height: 100%; overscroll-behavior: none; }
+html, body {
+  width: 100%; height: 100%;
+  overscroll-behavior: none;
+}
 
 body {
   background: #0a0a12;
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 100vh;
-  min-height: 100dvh;
+  width: 100vw;
+  height: 100dvh;
   overflow: hidden;
   font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
   user-select: none;
@@ -17,13 +20,11 @@ body {
   touch-action: none;
 }
 
+/* ── 가로 모드 (기본) ──────────────────────────────────── */
 #gameWrap {
   position: relative;
   width: 100%;
   height: 100%;
-  max-width: 100vw;
-  max-height: 100vh;
-  max-height: 100dvh;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -45,7 +46,7 @@ body {
   pointer-events: none;
 }
 
-/* ── Virtual Joystick (mobile only) ── */
+/* ── 가상 조이스틱 ─────────────────────────────────────── */
 #joystick {
   display: none;
   position: absolute;
@@ -73,6 +74,49 @@ body {
   transition: background 0.2s;
 }
 body.is-touch #joystick { display: block; }
+
+/* ── 세로 모드 (portrait) 전용 레이아웃 ─────────────────── */
+@media screen and (orientation: portrait) {
+  body {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;  /* 캔버스를 화면 최상단에 */
+  }
+
+  #gameWrap {
+    width: 100%;
+    height: 100dvh;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  /* 캔버스: 화면 전체 너비, 상단에 고정 */
+  #gameCanvas {
+    width: 100vw !important;
+    height: auto !important;
+    max-width: 100vw !important;
+    max-height: none !important;
+    flex-shrink: 0;
+  }
+
+  /* 조이스틱: 캔버스 아래 남은 공간의 중하단 */
+  body.is-touch #joystick {
+    position: fixed !important;
+    /* 캔버스 높이(= vw/1.5) 아래에 위치 */
+    top: calc(100vw / 1.5 + 28px);
+    left: 44px;
+    bottom: auto !important;
+    width: 160px;
+    height: 160px;
+  }
+  body.is-touch #joystickKnob {
+    width: 70px;
+    height: 70px;
+    margin: -35px 0 0 -35px;
+  }
+}
 
 /* Level up overlay */
 #levelUpOverlay {

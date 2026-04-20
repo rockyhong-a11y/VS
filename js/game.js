@@ -74,17 +74,28 @@ if (isTouchDevice) document.body.classList.add('is-touch');
 
 // Canvas responsive scaling (CSS size only, keep internal resolution)
 function fitCanvas() {
-  const wrap = document.getElementById('gameWrap');
-  const vw = wrap.clientWidth;
-  const vh = wrap.clientHeight;
-  const ratio = CANVAS_W / CANVAS_H;
-  let w = vw, h = vw / ratio;
-  if (h > vh) { h = vh; w = vh * ratio; }
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
+  const isPortrait = window.innerHeight > window.innerWidth;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const ratio = CANVAS_W / CANVAS_H; // 1.5 (landscape)
+
+  if (isPortrait) {
+    // 세로 모드: 캔버스가 화면 전체 너비를 채우고 상단에 고정
+    const w = vw;
+    const h = Math.round(vw / ratio);
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas.style.display = 'block';
+  } else {
+    // 가로 모드: 비율 유지하며 뷰포트에 맞춤
+    let w = vw, h = Math.round(vw / ratio);
+    if (h > vh) { h = vh; w = Math.round(vh * ratio); }
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
+  }
 }
 window.addEventListener('resize', fitCanvas);
-window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 100));
+window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 200));
 fitCanvas();
 
 // ─── GAME STATE ─────────────────────────────────────────────
@@ -134,11 +145,12 @@ const dmgNumbers = [];
 let screenShake = { x: 0, y: 0, power: 0, timer: 0 };
 
 // Performance caps
-const MAX_PARTICLES = 140;
-const MAX_DMG_NUMBERS = 28;
-const MAX_ENEMIES = 180;
-const MAX_PROJECTILES = 120;
-const MAX_XP_GEMS = 60;
+const MAX_PARTICLES    = 100;
+const MAX_DMG_NUMBERS  = 20;
+const MAX_ENEMIES      = 100;
+const MAX_PROJECTILES  = 80;
+const MAX_XP_GEMS      = 50;
+const MAX_AREA_EFFECTS = 16;
 
 // ── 게임 전역 설정 ─────────────────────────────────────────
 const ZOOM = 0.67;          // 1.0 = 1:1, 0.67 = ~50% 줌아웃 (더 넓게)
@@ -178,7 +190,7 @@ class Player {
     this.y = WORLD_H / 2;
     this.hp = this.def.hp;
     this.maxHp = this.def.hp;
-    this.speed = this.def.speed;
+    this.speed = this.def.speed * 1.2; // 이동속도 +20%
     this.hpRegen = this.def.hpRegen;
     this.atkMult = this.def.passive.atkMult || 1.0;
     this.cdMult = this.def.passive.cdMult || 1.0;
@@ -420,10 +432,11 @@ class Projectile {
     if (this._exploded) return;
     this._exploded = true;
     const eff = new AreaEffect(this.x, this.y, this.explosionRadius, this.explosionDamage, '#ff6633', 'explosion', 0.5, 999);
+    if (game.areaEffects.length >= MAX_AREA_EFFECTS) game.areaEffects.shift();
     game.areaEffects.push(eff);
     // instant damage
     for (const e of game.enemies) {
-      if (dist(this.x, this.y, e.x, e.y) <= this.explosionRadius) {
+      if (e.alive && dist(this.x, this.y, e.x, e.y) <= this.explosionRadius) {
         game._dealDamage(e, this.explosionDamage, e.x, e.y);
       }
     }
@@ -484,7 +497,8 @@ class Game {
 
   gainXp(amount) {
     this.xp += amount;
-    while (this.xp >= this.xpNeeded) {
+    // 한 번에 하나씩만 처리 — 동시 다중 레벨업으로 인한 UI 중복·멈춤 방지
+    if (this.xp >= this.xpNeeded && screen === 'playing') {
       this.xp -= this.xpNeeded;
       this.levelUp();
     }
@@ -494,7 +508,7 @@ class Game {
     this.level++;
     const idx = Math.min(this.level - 1, XP_TABLE.length - 1);
     this.xpNeeded = XP_TABLE[idx];
-    this.pendingUpgrades = this._generateUpgrades(3);
+    this.pendingUpgrades = this._generateUpgrades(2);
     screen = 'levelUp';
     showLevelUpUI(this.pendingUpgrades, this);
   }
@@ -511,7 +525,7 @@ class Game {
 
     // New weapons
     for (const id of this.availableWeapons) {
-      if (!this.player.hasWeapon(id) && this.player.weapons.length < 6) {
+      if (!this.player.hasWeapon(id) && this.player.weapons.length < 4) {
         options.push({ type: 'weapon_new', defId: id, rarity: 'rare' });
       }
     }
@@ -636,6 +650,7 @@ class Game {
   _nearestEnemy(x, y, exclude = []) {
     let nearest = null, bestDist = Infinity;
     for (const e of this.enemies) {
+      if (!e.alive) continue;  // 죽은 적 타겟 금지
       if (exclude.includes(e)) continue;
       const d = distSq(x, y, e.x, e.y);
       if (d < bestDist) { bestDist = d; nearest = e; }
@@ -653,15 +668,20 @@ class Game {
       eff.startAngle = angle;
       eff.endAngle = angle + Math.PI * 2 / slices;
       eff.startAngle = -Math.PI/2; eff.endAngle = Math.PI*2 - Math.PI/2;
-      this.areaEffects.push(eff);
+      this._pushAreaEffect(eff);
     }
     // Instant damage ring
     for (const e of this.enemies) {
-      if (dist(p.x, p.y, e.x, e.y) <= range) {
+      if (e.alive && dist(p.x, p.y, e.x, e.y) <= range) {
         this._dealDamage(e, dmg, p.x, p.y);
       }
     }
     spawnParticles(p.x, p.y, '#88ccff', 12, 80);
+  }
+
+  _pushAreaEffect(eff) {
+    if (this.areaEffects.length >= MAX_AREA_EFFECTS) this.areaEffects.shift();
+    this.areaEffects.push(eff);
   }
 
   _pushProjectile(proj) {
@@ -707,7 +727,7 @@ class Game {
       const chain = [target];
       let last = target;
       for (let c = 0; c < lvl.chain; c++) {
-        const next = this.enemies.find(e => !chain.includes(e) && dist(last.x, last.y, e.x, e.y) < 120);
+        const next = this.enemies.find(e => e.alive && !chain.includes(e) && dist(last.x, last.y, e.x, e.y) < 120);
         if (!next) break;
         chain.push(next);
         last = next;
@@ -728,7 +748,7 @@ class Game {
     const ty = nearest ? nearest.y + randomInRange(-30, 30) : p.y + randomInRange(-100, 100);
     const radius = lvl.radius * aoeMult;
     const eff = new AreaEffect(tx, ty, radius, dmg, '#44ddff', 'holyWater', lvl.duration, 0.4);
-    this.areaEffects.push(eff);
+    this._pushAreaEffect(eff);
   }
 
   _fireExplosion(lvl, dmg, aoeMult) {
@@ -741,12 +761,12 @@ class Game {
       const radius = lvl.radius * aoeMult;
       // Instant explosion
       for (const e of this.enemies) {
-        if (dist(tx, ty, e.x, e.y) <= radius) {
+        if (e.alive && dist(tx, ty, e.x, e.y) <= radius) {
           this._dealDamage(e, dmg, tx, ty);
         }
       }
       const eff = new AreaEffect(tx, ty, radius, 0, '#ff8844', 'explosion', 0.4, 999);
-      this.areaEffects.push(eff);
+      this._pushAreaEffect(eff);
       spawnParticles(tx, ty, '#ff8844', 20, 120);
       addScreenShake(4);
     }
@@ -765,14 +785,14 @@ class Game {
       const cx = p.x + sign * len / 2, cy = p.y;
       // Instant damage in rectangle
       for (const e of this.enemies) {
-        if (Math.abs(e.x - cx) < len/2 && Math.abs(e.y - cy) < wid/2) {
+        if (e.alive && Math.abs(e.x - cx) < len/2 && Math.abs(e.y - cy) < wid/2) {
           this._dealDamage(e, dmg, e.x, e.y);
         }
       }
       // Visual: directional slash
       const eff = new AreaEffect(cx, cy, len/2, 0, '#ff99bb', 'whip', 0.25, 999);
       eff.width = wid; eff.sign = sign;
-      this.areaEffects.push(eff);
+      this._pushAreaEffect(eff);
       spawnParticles(cx, cy, '#ff99bb', 6, 80);
     }
   }
@@ -885,7 +905,7 @@ class Game {
     if (p._garlicTick <= 0) {
       p._garlicTick = tickRate;
       for (const e of this.enemies) {
-        if (dist(p.x, p.y, e.x, e.y) <= radius) {
+        if (e.alive && dist(p.x, p.y, e.x, e.y) <= radius) {
           this._dealDamage(e, dmg, e.x, e.y);
         }
       }
@@ -893,6 +913,7 @@ class Game {
   }
 
   _dealDamage(enemy, dmg, sx, sy) {
+    if (!enemy.alive) return false;  // 이미 죽은 적에게 데미지 금지 (무한재귀 방지)
     const crit = Math.random() < 0.1;
     const finalDmg = Math.round(dmg * (crit ? 2 : 1));
     const died = enemy.takeDamage(finalDmg);
@@ -904,16 +925,18 @@ class Game {
   }
 
   _onEnemyDie(enemy) {
+    if (enemy._dieHandled) return;  // 중복 사망 처리 방지
+    enemy._dieHandled = true;
     this.kills++;
     spawnParticles(enemy.x, enemy.y, enemy.def.color, enemy.isBoss ? 30 : 10, 90);
     if (enemy.isBoss) { this.bossesDefeated++; addScreenShake(10); }
     // Drop XP gem
     const value = enemy.xp;
     this.xpGems.push(new XpGem(enemy.x, enemy.y, value));
-    // Slime explodes
+    // Slime explodes — alive 체크로 이미 죽은 적에게 연쇄 금지
     if (enemy.def.onDeath === 'explode') {
       for (const e of this.enemies) {
-        if (e !== enemy && dist(enemy.x, enemy.y, e.x, e.y) < 60) {
+        if (e !== enemy && e.alive && dist(enemy.x, enemy.y, e.x, e.y) < 60) {
           this._dealDamage(e, enemy.def.damage * 2, enemy.x, enemy.y);
         }
       }
@@ -952,7 +975,7 @@ class Game {
         const ox = p.x + Math.cos(angle) * radius;
         const oy = p.y + Math.sin(angle) * radius;
         for (const e of this.enemies) {
-          if (dist(ox, oy, e.x, e.y) < e.def.size + 8) {
+          if (e.alive && dist(ox, oy, e.x, e.y) < e.def.size + 8) {
             if (!e._orbHitTimer || e._orbHitTimer <= 0) {
               this._dealDamage(e, dmg, ox, oy);
               e._orbHitTimer = 0.35;
@@ -989,7 +1012,7 @@ class Game {
 
     // Enemy damage to player
     for (const e of this.enemies) {
-      if (dist(this.player.x, this.player.y, e.x, e.y) < e.def.size + 14) {
+      if (e.alive && dist(this.player.x, this.player.y, e.x, e.y) < e.def.size + 14) {
         this.player.takeDamage(e.damage * dt * 25);
       }
     }
@@ -999,7 +1022,7 @@ class Game {
     if (this.spawnTimer <= 0) {
       const room = MAX_ENEMIES - this.enemies.length;
       if (room > 0) {
-        const batch = Math.min(2 + Math.floor(this.gameTime / 45), 7, room);
+        const batch = Math.min(2 + Math.floor(this.gameTime / 45), 5, room);
         for (let i = 0; i < batch; i++) this.spawnEnemy();
       }
       const interval = Math.max(0.6, 1.8 - this.gameTime / 180);
@@ -1031,6 +1054,7 @@ class Game {
       if (!proj.alive) { this.projectiles.splice(i, 1); continue; }
 
       for (const e of this.enemies) {
+        if (!e.alive) continue;
         if (proj.hitIds.has(e.id)) continue;
         if (dist(proj.x, proj.y, e.x, e.y) < e.def.size + proj.radius) {
           proj.hitIds.add(e.id);
@@ -1051,7 +1075,7 @@ class Game {
       if (!alive) { this.areaEffects.splice(i, 1); continue; }
       if (eff.canTick() && eff.damage > 0) {
         for (const e of this.enemies) {
-          if (dist(eff.x, eff.y, e.x, e.y) <= eff.radius) {
+          if (e.alive && dist(eff.x, eff.y, e.x, e.y) <= eff.radius) {
             this._dealDamage(e, eff.damage, eff.x, eff.y);
           }
         }

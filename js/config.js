@@ -577,9 +577,10 @@ const ENEMY_DEFS = {
 };
 
 // ─── XP TABLE ───────────────────────────────────────────────
+// base 13 (기존 10의 130%) → 레벨업 속도 약 30% 하향
 const XP_TABLE = [];
 (function buildXpTable() {
-  let base = 10;
+  let base = 13;
   for (let i = 0; i < 60; i++) {
     XP_TABLE.push(Math.floor(base));
     base *= 1.12;
