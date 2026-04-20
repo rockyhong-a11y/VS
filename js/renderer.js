@@ -1157,108 +1157,137 @@ class Renderer {
   }
 
   // ── HUD ─────────────────────────────────────────────────
-  drawHUD(ctx, state) {
+  // hudRegion: { x, w } — canvas 픽셀 기준 화면에 보이는 영역 (portrait 클리핑 대응)
+  drawHUD(ctx, state, hudRegion = null) {
     const { player, gameTime, totalTime, level, xp, xpNeeded, kills, charDef } = state;
     const W = this.canvas.width;
 
-    // HP Bar
+    // 가시 영역 (기본 = 전체 캔버스)
+    const VX    = hudRegion ? hudRegion.x : 0;
+    const VW    = hudRegion ? hudRegion.w : W;
+    const VMid  = VX + VW / 2;
+    const VRight = VX + VW;
+    const PAD   = 10;
+
+    // UI 스케일: 가시 너비 280px 기준, 최대 1.0 (너비 좁을수록 작아짐)
+    const S = Math.min(1.0, VW / 280);
+
+    // ── HP Bar ──────────────────────────────────────────────
+    const barW  = Math.round(Math.min(200, VW * 0.48) * S);
+    const barH  = Math.round(15 * S);
+    const barX  = VX + PAD;
+    const barY  = 10;
     const hpRatio = player.hp / player.maxHp;
     ctx.fillStyle = '#00000099';
-    ctx.fillRect(12, 12, 210, 18);
+    ctx.fillRect(barX, barY, barW, barH);
     const hpColor = hpRatio > 0.5 ? '#44ff88' : hpRatio > 0.25 ? '#ffcc00' : '#ff4444';
     ctx.fillStyle = hpColor;
-    ctx.fillRect(12, 12, 210 * hpRatio, 18);
-    ctx.strokeStyle = '#ffffff55';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(12, 12, 210, 18);
+    ctx.fillRect(barX, barY, barW * hpRatio, barH);
+    ctx.strokeStyle = '#ffffff55'; ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 11px sans-serif';
+    ctx.font = `bold ${Math.max(8, Math.round(10 * S))}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(`♥ ${Math.ceil(player.hp)} / ${Math.ceil(player.maxHp)}`, 117, 25);
+    ctx.fillText(`♥ ${Math.ceil(player.hp)} / ${Math.ceil(player.maxHp)}`, barX + barW / 2, barY + barH - 2);
 
-    // XP Bar
+    // ── XP Bar ──────────────────────────────────────────────
+    const xpY = barY + barH + 2;
+    const xpH = Math.round(6 * S);
     ctx.fillStyle = '#00000099';
-    ctx.fillRect(12, 34, 210, 8);
+    ctx.fillRect(barX, xpY, barW, xpH);
     ctx.fillStyle = '#8844ff';
-    ctx.fillRect(12, 34, 210 * (xp / xpNeeded), 8);
+    ctx.fillRect(barX, xpY, barW * (xp / xpNeeded), xpH);
     ctx.strokeStyle = '#ffffff33';
-    ctx.strokeRect(12, 34, 210, 8);
+    ctx.strokeRect(barX, xpY, barW, xpH);
 
-    // Level badge
+    // ── Level badge + Character name ────────────────────────
+    const lvlY  = xpY + xpH + 3;
+    const lvlH  = Math.round(17 * S);
+    const lvlBW = Math.round(42 * S);
     ctx.fillStyle = '#8844ff';
-    ctx.beginPath(); ctx.roundRect(12, 46, 56, 20, 4); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(barX, lvlY, lvlBW, lvlH, 3); ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px sans-serif';
+    ctx.font = `bold ${Math.max(8, Math.round(10 * S))}px sans-serif`;
     ctx.textAlign = 'left';
-    ctx.fillText(`Lv.${level}`, 18, 61);
-
-    // Character name
+    ctx.fillText(`Lv.${level}`, barX + 4, lvlY + lvlH - 3);
     ctx.fillStyle = charDef.color;
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText(`${charDef.name} ${charDef.subtitle}`, 74, 61);
+    ctx.font = `bold ${Math.max(8, Math.round(10 * S))}px sans-serif`;
+    ctx.fillText(`${charDef.name} ${charDef.subtitle}`, barX + lvlBW + 5, lvlY + lvlH - 3);
 
-    // Timer (center top)
+    // ── Timer (visible 중앙 상단) ────────────────────────────
     const remaining = Math.max(0, totalTime - gameTime);
+    const tmW = Math.round(90 * S), tmH = Math.round(24 * S);
     ctx.fillStyle = '#000000aa';
-    ctx.beginPath(); ctx.roundRect(W/2 - 52, 10, 104, 28, 6); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(VMid - tmW / 2, barY, tmW, tmH, 5); ctx.fill();
     ctx.fillStyle = gameTime > totalTime * 0.8 ? '#ff6644' : '#fff';
-    ctx.font = 'bold 18px monospace';
+    ctx.font = `bold ${Math.max(9, Math.round(15 * S))}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(formatTime(remaining), W/2, 30);
+    ctx.fillText(formatTime(remaining), VMid, barY + tmH * 0.77);
 
-    // Kills (top right)
+    // ── Kills (visible 우측 상단) ────────────────────────────
+    const klW = Math.round(76 * S), klH = Math.round(20 * S);
     ctx.fillStyle = '#000000aa';
-    ctx.beginPath(); ctx.roundRect(W - 110, 10, 100, 24, 5); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(VRight - klW - PAD, barY, klW, klH, 4); ctx.fill();
     ctx.fillStyle = '#ffcc44';
-    ctx.font = '13px sans-serif';
+    ctx.font = `${Math.max(8, Math.round(11 * S))}px sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText(`💀 ${kills}`, W - 16, 27);
+    ctx.fillText(`💀 ${kills}`, VRight - PAD - 3, barY + klH * 0.77);
 
     ctx.textAlign = 'left';
   }
 
   // ── WEAPON ICONS (bottom HUD) ───────────────────────────
-  drawWeaponBar(ctx, weapons, items) {
+  drawWeaponBar(ctx, weapons, items, hudRegion = null) {
     const H = this.canvas.height;
     const W = this.canvas.width;
-    const slotW = 52, slotH = 52;
-    const totalW = Math.min(weapons.length + items.length, 12) * (slotW + 6);
-    let startX = W / 2 - totalW / 2;
-    const y = H - slotH - 10;
+
+    const VX   = hudRegion ? hudRegion.x : 0;
+    const VW   = hudRegion ? hudRegion.w : W;
+    const VMid = VX + VW / 2;
+
+    // UI 스케일 (좁은 화면에서 작게)
+    const S = Math.min(1.0, VW / 280);
+    const slotW = Math.round(46 * S), slotH = Math.round(46 * S);
+    const gap   = Math.round(5 * S);
 
     const all = [...weapons.map(w => ({ ...w, isWeapon: true })), ...items.map(i => ({ ...i, isWeapon: false }))];
+    const count = Math.min(all.length, 12);
+    const totalW = count * (slotW + gap) - gap;
+    let startX = VMid - totalW / 2;
+    const y = H - slotH - 8;
 
     for (const slot of all) {
       ctx.fillStyle = '#000000bb';
       ctx.strokeStyle = slot.isWeapon ? slot.def.color : '#888';
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.roundRect(startX, y, slotW, slotH, 6); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.roundRect(startX, y, slotW, slotH, 5); ctx.fill(); ctx.stroke();
 
-      // Try sprite icon first, fall back to emoji
-      const iconSize = 28;
+      const iconSize = Math.round(26 * S);
       const iconX = startX + (slotW - iconSize) / 2;
-      const iconY = y + 6;
+      const iconY = y + Math.round(5 * S);
       const drawnIcon = SPRITES.drawItem(ctx, slot.def.id, iconX, iconY, iconSize);
       if (!drawnIcon) {
-        ctx.font = '26px serif';
+        ctx.font = `${Math.round(22 * S)}px serif`;
         ctx.textAlign = 'center';
-        ctx.fillText(slot.def.icon, startX + slotW/2, y + 30);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(slot.def.icon, startX + slotW / 2, y + slotH * 0.65);
       }
 
       ctx.fillStyle = '#ffe066';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.fillText(`Lv.${slot.level}`, startX + slotW/2, y + slotH - 5);
+      ctx.font = `bold ${Math.max(7, Math.round(9 * S))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`Lv.${slot.level}`, startX + slotW / 2, y + slotH - 3);
 
       if (slot.isWeapon && slot.cooldownTimer > 0) {
         const ratio = slot.cooldownTimer / (slot.def.levels[slot.level-1].cooldown * (slot.cdMult || 1));
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.beginPath();
-        ctx.moveTo(startX + slotW/2, y + slotH/2);
-        ctx.arc(startX + slotW/2, y + slotH/2, slotW*0.45, -Math.PI/2, -Math.PI/2 + Math.PI*2*ratio);
+        ctx.moveTo(startX + slotW / 2, y + slotH / 2);
+        ctx.arc(startX + slotW / 2, y + slotH / 2, slotW * 0.43, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
         ctx.closePath(); ctx.fill();
       }
 
-      startX += slotW + 6;
+      startX += slotW + gap;
     }
   }
 }

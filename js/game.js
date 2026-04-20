@@ -158,7 +158,8 @@ const MAX_XP_GEMS      = 50;
 const MAX_AREA_EFFECTS = 16;
 
 // ── 게임 전역 설정 ─────────────────────────────────────────
-const ZOOM = 0.67;          // 1.0 = 1:1, 0.67 = ~50% 줌아웃 (더 넓게)
+const ZOOM         = 0.67;   // PC 가로 모드 줌
+const ZOOM_PORTRAIT = 0.40;  // 모바일 세로 모드: 50% 줌아웃 (더 넓게)
 const GAME_SPEED_MULT = 1.2; // 게임 속도 배율
 
 function spawnParticles(wx, wy, color, count, speed = 80) {
@@ -1111,22 +1112,39 @@ class Game {
 
   draw() {
     const p = this.player;
-    // ZOOM: 카메라가 ZOOM 배율로 더 넓은 영역을 보여줌
-    const visW = CANVAS_W / ZOOM;
-    const visH = CANVAS_H / ZOOM;
-    const camX = p.x - visW / 2 + screenShake.x / ZOOM;
-    const camY = p.y - visH / 2 + screenShake.y / ZOOM;
+
+    // ── 방향에 따라 ZOOM 결정 ─────────────────────────────
+    const isPortrait = window.innerHeight > window.innerWidth;
+    const curZoom = isPortrait ? ZOOM_PORTRAIT : ZOOM;
+
+    // ── HUD visible region 계산 (세로 모드에서 캔버스가 viewport보다 넓어 클리핑됨) ──
+    // canvas.style.left 가 음수면 그만큼 캔버스가 왼쪽으로 벗어난 것
+    const cssW   = parseFloat(canvas.style.width)  || CANVAS_W;
+    const cssLeft = parseFloat(canvas.style.left)  || 0;  // e.g. -438
+    const cssToCvs = CANVAS_W / cssW;              // CSS px → 캔버스 px 변환비
+    const vpLeft = Math.round(Math.max(0, -cssLeft) * cssToCvs); // visible 시작 x (canvas px)
+    const vpW    = Math.round(Math.min(window.innerWidth, cssW) * cssToCvs); // visible 너비
+    const hudRegion = { x: vpLeft, w: Math.min(vpW, CANVAS_W - vpLeft) };
+
+    // ── 카메라 ────────────────────────────────────────────
+    const visW = CANVAS_W / curZoom;
+    const visH = CANVAS_H / curZoom;
+    const camX = p.x - visW / 2 + screenShake.x / curZoom;
+    const camY = p.y - visH / 2 + screenShake.y / curZoom;
 
     renderer.clear();
-    renderer.drawWorld(camX, camY, ZOOM);
+    renderer.drawWorld(camX, camY, curZoom);
 
     ctx.save();
-    ctx.scale(ZOOM, ZOOM);
+    ctx.scale(curZoom, curZoom);
     ctx.translate(-camX, -camY);
 
     // Viewport for culling (세계 좌표 기준)
     const vL = camX - 60, vR = camX + visW + 60;
     const vT = camY - 60, vB = camY + visH + 60;
+    // portrait에서 실제 보이는 세계 x 범위만 culling
+    const visWorldX = hudRegion.x / curZoom;
+    const visWorldW = hudRegion.w / curZoom;
     const inView = (x, y) => x > vL && x < vR && y > vT && y < vB;
 
     // XP gems (cull offscreen)
@@ -1187,7 +1205,7 @@ class Game {
 
     ctx.restore();
 
-    // HUD (screen space)
+    // HUD (screen space) — hudRegion으로 가시 영역 내에 그림
     renderer.drawHUD(ctx, {
       player: p,
       gameTime: this.gameTime,
@@ -1197,8 +1215,8 @@ class Game {
       xpNeeded: this.xpNeeded,
       kills: this.kills,
       charDef: p.def,
-    });
-    renderer.drawWeaponBar(ctx, p.weapons, p.items);
+    }, hudRegion);
+    renderer.drawWeaponBar(ctx, p.weapons, p.items, hudRegion);
   }
 }
 
