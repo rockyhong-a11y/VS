@@ -63,17 +63,23 @@ class Renderer {
   drawPlayer(ctx, px, py, charDef, facing, frame, invincible, invTimer) {
     if (invincible && Math.floor(invTimer * 10) % 2 === 0) return;
 
-    const scale = 2.5;
-    const dw = 16 * scale;   // 40px
-    const dh = 32 * scale;   // 80px
+    const sprId = charDef.spriteId || charDef.id;
+    const targetH = 80;   // 캔버스 기준 렌더링 높이 (px)
+    const aspect  = SPRITES.charAspect(sprId) || 0.5;
+    const dw = Math.round(targetH * aspect);
+    const dh = targetH;
     const bob = Math.sin(frame * 6) * 2.5;
 
-    this.drawShadow(ctx, px, py + 36, 18);
+    // 프레임 인덱스: frame (0~N 연속값) → 정수 인덱스
+    const fc = SPRITES.frameCount(sprId);
+    const fps = 6;   // 초당 몇 프레임 바꿀지
+    const frameIdx = Math.floor(frame * fps) % fc;
+
+    this.drawShadow(ctx, px, py + dh * 0.42, dw * 0.45);
 
     const dx = px - dw / 2;
-    const dy = py + bob - dh * 0.5;
-    const sprId = charDef.spriteId || charDef.id;
-    const drawn = SPRITES.drawChar(ctx, sprId, dx, dy, scale, facing, invincible);
+    const dy = py + bob - dh * 0.52;
+    const drawn = SPRITES.drawChar(ctx, sprId, dx, dy, targetH, facing, invincible, frameIdx);
     if (!drawn) {
       // Fallback: canvas-drawn character
       ctx.save();

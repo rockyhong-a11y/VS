@@ -1312,16 +1312,16 @@ function buildCharSelect() {
     card.style.setProperty('--char-color-shadow', def.colorShadow);
     card.dataset.charId = id;
 
-    const portraitCanvas = document.createElement('canvas');
-    portraitCanvas.width = 110; portraitCanvas.height = 140;
-
     const stats = def.stats;
+    // GIF 애니메이션 이미지 (캐릭터 선택창용)
+    const gifImg = document.createElement('img');
+    gifImg.src = `img/chars/${def.spriteId || id}.gif`;
+    gifImg.className = 'char-gif';
+    gifImg.alt = def.name;
+
     card.innerHTML = `
       <div class="char-name">${def.name}</div>
       <div class="char-subtitle">${def.subtitle}</div>
-    `;
-    card.insertBefore(portraitCanvas, card.firstChild);
-    card.innerHTML += `
       <div class="char-desc">${def.description.replace('\n','<br>')}</div>
       <div class="char-stats">
         ${['hp','spd','atk','def'].map(s => `
@@ -1332,10 +1332,7 @@ function buildCharSelect() {
         `).join('')}
       </div>
     `;
-    // Re-insert portrait canvas (after innerHTML overwrite)
-    card.insertBefore(portraitCanvas, card.firstChild);
-
-    setTimeout(() => drawCharPortrait(portraitCanvas, def, 1.15), 10);
+    card.insertBefore(gifImg, card.firstChild);
 
     card.addEventListener('click', () => {
       document.querySelectorAll('.char-card').forEach(c => c.classList.remove('selected'));

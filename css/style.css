@@ -245,6 +245,14 @@ body.is-touch #joystick { display: block; }
   box-shadow: 0 8px 32px var(--char-color-shadow);
 }
 .char-card canvas { display: block; margin: 0 auto 0.8rem; }
+.char-gif {
+  display: block;
+  margin: 0 auto 0.8rem;
+  height: 90px;
+  width: auto;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
 .char-card .char-name { font-size: 1.5rem; font-weight: 900; color: #fff; }
 .char-card .char-subtitle { font-size: 0.88rem; color: var(--char-color); font-weight: 700; margin-bottom: 0.5rem; }
 .char-card .char-desc { font-size: 0.78rem; color: #9999bb; line-height: 1.4; margin-bottom: 0.8rem; }
