@@ -204,6 +204,7 @@ class Player {
     this.xpRange = 110;
     this.invincibleTime = 1.0;
     this.invTimer = 0;
+    this._dead = false;   // HP 재생으로 부활 방지용 확정 사망 플래그
     this.frame = 0;
     this.facing = 1;
     this.moveX = 0; this.moveY = 0;
@@ -227,14 +228,19 @@ class Player {
   hasWeapon(id) { return this.weapons.some(w => w.def.id === id); }
   getWeapon(id) { return this.weapons.find(w => w.def.id === id); }
 
-  get alive() { return this.hp > 0; }
+  get alive() { return !this._dead; }
 
   takeDamage(dmg) {
-    if (this.invTimer > 0) return;
+    if (this._dead || this.invTimer > 0) return;
     this.hp = Math.max(0, this.hp - dmg);
     this.invTimer = this.invincibleTime;
     addScreenShake(dmg * 0.3);
     spawnParticles(this.x, this.y, '#ff4444', 6, 60);
+    // HP가 0에 닿는 순간 즉시 확정 사망 — 재생으로 부활 불가
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this._dead = true;
+    }
   }
 
   update(dt, enemies) {
@@ -262,8 +268,8 @@ class Player {
     // Invincibility
     if (this.invTimer > 0) this.invTimer -= dt;
 
-    // HP regen
-    this.hp = Math.min(this.maxHp, this.hp + this.hpRegen * dt);
+    // HP regen (사망 상태에선 재생 없음)
+    if (!this._dead) this.hp = Math.min(this.maxHp, this.hp + this.hpRegen * dt);
 
     // Update weapon cooldowns & orb angles
     for (const w of this.weapons) {
@@ -1008,18 +1014,15 @@ class Game {
     // Player
     this.player.update(dt, this.enemies);
     if (!this.player.alive) {
-      screen = 'charSelect';
-      G = null;
-      selectedCharId = null;
-      document.getElementById('charSelectOverlay').style.display = 'flex';
-      document.getElementById('endOverlay').classList.remove('active');
+      screen = 'dead';
+      showEndScreen(false, this);
       return;
     }
 
-    // Enemy damage to player
+    // Enemy damage to player (×37.5 = 기존 25의 1.5배)
     for (const e of this.enemies) {
       if (e.alive && dist(this.player.x, this.player.y, e.x, e.y) < e.def.size + 14) {
-        this.player.takeDamage(e.damage * dt * 25);
+        this.player.takeDamage(e.damage * dt * 37.5);
       }
     }
 
@@ -1358,13 +1361,18 @@ function startGame(charId) {
   document.getElementById('endOverlay').classList.remove('active');
 }
 
-// ─── RETRY ──────────────────────────────────────────────────
+// ─── RETRY (같은 캐릭터로 즉시 재시작) ─────────────────────
 document.getElementById('retryBtn').addEventListener('click', () => {
   document.getElementById('endOverlay').classList.remove('active');
-  document.getElementById('charSelectOverlay').style.display = 'flex';
-  screen = 'charSelect';
-  selectedCharId = null;
-  G = null;
+  if (selectedCharId) {
+    // 같은 캐릭터로 바로 재시작
+    startGame(selectedCharId);
+  } else {
+    // fallback: 캐릭터 선택화면
+    document.getElementById('charSelectOverlay').style.display = 'flex';
+    screen = 'charSelect';
+    G = null;
+  }
 });
 
 // ─── GAME LOOP ──────────────────────────────────────────────
